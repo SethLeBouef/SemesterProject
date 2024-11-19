@@ -25,3 +25,5 @@ def create_connection(uri='mysql', database=None):
 
     engine = create_engine(db_uri)
     return engine.begin()
+
+
