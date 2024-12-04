@@ -4,11 +4,11 @@ import numpy as np
 from sqlalchemy import create_engine
 from src.config import Config
 
-# Initialize the database connection
+
 config = Config()
 engine = config.get_engine()
 
-# Step 1: Load Data from Keystroke_Raw Table
+# S Load Data from Keystroke_Raw Table
 query = """
 SELECT * FROM KeyLoggerFull.Keystroke_Raw
 """
@@ -21,12 +21,12 @@ keystroke_data.columns = ['subject', 'sessionIndex', 'rep', 'H.period', 'DD.peri
                           'UD.Shift.r.o', 'H.o', 'DD.o.a', 'UD.o.a', 'H.a', 'DD.a.n', 'UD.a.n', 'H.n', 
                           'DD.n.l', 'UD.n.l', 'H.l', 'DD.l.Return', 'UD.l.Return', 'H.Return']
 
-# Step 2: Handle Missing Values
+#  Handle Missing Values
 if keystroke_data.isnull().values.any():
     print("Missing values detected. Filling with column means...")
     keystroke_data.fillna(keystroke_data.mean(), inplace=True)
 
-# Step 3: Calculate Features
+#  Calculate Features
 # Basic Metrics
 keystroke_data['total_characters'] = keystroke_data[['H.period', 'H.t', 'H.i', 'H.e', 'H.five', 
                                                      'H.Shift.r', 'H.o', 'H.a', 'H.n', 'H.l', 
@@ -60,7 +60,7 @@ keystroke_data['std_dwell_time'] = keystroke_data[['H.period', 'H.t', 'H.i', 'H.
 
 keystroke_data['pause_ratio'] = keystroke_data['avg_flight_time'] / keystroke_data['avg_dwell_time']
 
-# Advanced Features
+
 keystroke_data['transition_frequency_t_i'] = (
     keystroke_data['H.i'] - keystroke_data['H.t']
 ).abs() / keystroke_data['total_typing_duration']
@@ -96,6 +96,6 @@ keystroke_data['typing_duration_per_character'] = keystroke_data['total_typing_d
 # Combined Features
 keystroke_data['typing_efficiency'] = keystroke_data['WPM'] * keystroke_data['hold_ratio']
 
-# Step 4: Save the Data with New Features
+#  Save the Data with New Features
 keystroke_data.to_sql('Features_Created', con=engine, if_exists='replace', index=False)
 print("Feature creation complete, and data saved to Features_Created table.")

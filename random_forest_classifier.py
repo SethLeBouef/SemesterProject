@@ -3,108 +3,132 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold, GridSearchCV, train_test_split
-from sklearn.metrics import classification_report, confusion_matrix, make_scorer
+from sklearn.model_selection import StratifiedKFold, train_test_split, cross_val_score
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from src.config import Config
+from sklearn.inspection import permutation_importance
+from sklearn.utils import shuffle
+import shap
 
-# Initialize the database connection
-config = Config()
-engine = config.get_engine()
+# Load your dataset 
+try:
+    from src.config import Config
+    config = Config()
+    engine = config.get_engine()
+except ImportError:
+    raise ImportError("Ensure 'Config' is properly defined and 'get_engine()' provides a valid SQLAlchemy engine.")
 
-# Load data from the Features_Created table
+# Query with the best features
 query = """
-SELECT 
-    subject, 
-    total_typing_duration, 
-    hold_ratio, 
-    CPS, 
-    WPM, 
-    avg_flight_time, 
-    avg_dwell_time, 
-    pause_ratio, 
-    std_flight_time, 
-    std_dwell_time 
+SELECT subject, 
+       avg_flight_time, avg_dwell_time, total_typing_duration, hold_ratio, CPS, WPM,
+       std_flight_time, std_dwell_time, pause_ratio, total_typing_duration_mean,
+       total_typing_duration_std, avg_flight_time_mean, avg_flight_time_std,
+       avg_dwell_time_mean, avg_dwell_time_std, CPS_mean, CPS_std, WPM_mean, WPM_std,
+       flight_to_dwell_ratio, typing_duration_per_character, typing_efficiency
 FROM Features_Created;
 """
-session_data = pd.read_sql_query(query, con=engine)
+data = pd.read_sql_query(query, con=engine)
 
-# Check for missing or invalid values and handle them
-if session_data.isnull().any().any():
+# Check for missing values
+if data.isnull().any().any():
     print("Missing values detected. Filling with median values.")
-    session_data.fillna(session_data.median(), inplace=True)
+    data.fillna(data.median(), inplace=True)
 
-# Select features and target
+# Define features and target
 features = [
-    'total_typing_duration', 
-    'hold_ratio', 
-    'CPS', 
-    'WPM', 
-    'avg_flight_time', 
-    'avg_dwell_time', 
-    'pause_ratio', 
-    'std_flight_time', 
-    'std_dwell_time'
+    'avg_flight_time', 'avg_dwell_time', 'total_typing_duration', 'hold_ratio', 'CPS', 'WPM',
+    'std_flight_time', 'std_dwell_time', 'pause_ratio', 'total_typing_duration_mean',
+    'total_typing_duration_std', 'avg_flight_time_mean', 'avg_flight_time_std',
+    'avg_dwell_time_mean', 'avg_dwell_time_std', 'CPS_mean', 'CPS_std', 'WPM_mean', 'WPM_std',
+    'flight_to_dwell_ratio', 'typing_duration_per_character', 'typing_efficiency'
 ]
-X = session_data[features]
-y = session_data['subject']
+X = data[features]
+y = data['subject']
 
-# Define the pipeline with scaling and the RandomForest classifier
+# Shuffle the data 
+X, y = shuffle(X, y, random_state=123)
+
+# Split the data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=123)
+
+# Define the Random Forest pipeline
 pipeline = Pipeline([
     ('scaler', StandardScaler()),
-    ('classifier', RandomForestClassifier(random_state=123, class_weight='balanced'))
+    ('classifier', RandomForestClassifier(
+        n_estimators=200, 
+        max_depth=20, 
+        min_samples_split=5, 
+        min_samples_leaf=3, 
+        random_state=123,
+        class_weight="balanced"
+    ))
 ])
 
-# Parameter grid for GridSearchCV
-param_grid = {
-    'classifier__n_estimators': [100, 200, 500],
-    'classifier__max_depth': [None, 10, 20, 30],
-    'classifier__min_samples_split': [2, 5, 10],
-    'classifier__min_samples_leaf': [1, 2, 4]
-}
+# Fit the model
+pipeline.fit(X_train, y_train)
 
-# Cross-validation strategy
+# Evaluate on the test set
+y_pred = pipeline.predict(X_test)
+print("\nClassification Report on Test Set:")
+print(classification_report(y_test, y_pred, zero_division=1))
+print("\nTest Accuracy:", accuracy_score(y_test, y_pred))
+
+# Cross-validation for overfitting check
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=123)
+cv_scores = cross_val_score(pipeline, X_train, y_train, cv=cv, scoring="accuracy")
 
-# Define scoring metrics
-scoring = {
-    'accuracy': 'accuracy',
-    'precision': make_scorer(precision_score, average='weighted', zero_division=1),
-    'recall': make_scorer(recall_score, average='weighted', zero_division=1),
-    'f1': make_scorer(f1_score, average='weighted', zero_division=1)
-}
+print("\nCross-Validation Accuracy: {:.2f}% ± {:.2f}%".format(cv_scores.mean() * 100, cv_scores.std() * 100))
 
-# GridSearchCV for hyperparameter tuning
-grid_search = GridSearchCV(pipeline, param_grid=param_grid, cv=cv, scoring='accuracy', n_jobs=-1, verbose=2)
-grid_search.fit(X, y)
+# Check permutation importance
+perm_importance = permutation_importance(
+    pipeline.named_steps["classifier"], 
+    X_test, 
+    y_test, 
+    n_repeats=10, 
+    random_state=123
+)
 
-# Retrieve the best model
-best_model = grid_search.best_estimator_
-print("Best Parameters:", grid_search.best_params_)
+# Create a DataFrame for feature importance
+importance_df = pd.DataFrame({
+    "Feature": features,
+    "Importance": perm_importance.importances_mean
+}).sort_values(by="Importance", ascending=False)
 
-# Split data for test evaluation
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=123, stratify=y)
+print("\nFeature Importance (Permutation):")
+print(importance_df)
 
-# Fit best model on training data
-best_model.fit(X_train, y_train)
-y_pred = best_model.predict(X_test)
-
-# Evaluate the model
-accuracy = accuracy_score(y_test, y_pred)
-print(f"\nFinal Model Test Accuracy: {accuracy * 100:.2f}%")
-
-# Detailed classification report
-print("\nClassification Report on Test Set:\n", classification_report(y_test, y_pred, zero_division=1))
-
-# Confusion Matrix
-conf_matrix = confusion_matrix(y_test, y_pred)
-plt.figure(figsize=(12, 8))
-sns.heatmap(conf_matrix, annot=True, fmt="d", cmap="Blues",
-            xticklabels=best_model.classes_,
-            yticklabels=best_model.classes_)
-plt.xlabel("Predicted")
-plt.ylabel("Actual")
-plt.title("Confusion Matrix of Tuned Random Forest Model on Test Set")
+plt.figure(figsize=(10, 6))
+sns.barplot(x="Importance", y="Feature", data=importance_df)
+plt.title("Permutation Feature Importance")
 plt.show()
+
+# Validate no overfitting with learning curve
+train_sizes = [0.1, 0.2, 0.4, 0.6, 0.8]
+train_scores = []
+test_scores = []
+
+for size in train_sizes:
+    X_partial, _, y_partial, _ = train_test_split(X_train, y_train, train_size=size, random_state=123, stratify=y_train)
+    pipeline.fit(X_partial, y_partial)
+    train_scores.append(accuracy_score(y_partial, pipeline.predict(X_partial)))
+    test_scores.append(accuracy_score(y_test, pipeline.predict(X_test)))
+
+plt.figure(figsize=(10, 6))
+plt.plot(train_sizes, train_scores, marker="o", label="Train Accuracy")
+plt.plot(train_sizes, test_scores, marker="o", label="Test Accuracy")
+plt.title("Learning Curve")
+plt.xlabel("Training Size Proportion")
+plt.ylabel("Accuracy")
+plt.legend()
+plt.show()
+
+
+# SHAP for feature explanation
+explainer = shap.TreeExplainer(pipeline.named_steps["classifier"])
+X_test_transformed = pipeline.named_steps['scaler'].transform(X_test)  # Get the transformed data
+shap_values = explainer.shap_values(X_test_transformed)
+
+# Ensure SHAP values align with X_test_transformed
+shap.summary_plot(shap_values[0], X_test_transformed, feature_names=features, plot_type="bar")

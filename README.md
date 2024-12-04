@@ -1,8 +1,7 @@
 # KeyLogger
 
-#Keystroke data is not loading for the new caluclated columns. Running variableCreation.py should be fixing the ongoing issue. Is going to need to have further troubleshooting. 
+Verify Connection to the sql server
 
-
-Make sure the connecrtion URL is correc, as it liikes to autocorrect my password. 
+Features_Created sql table contains all variables both session level and local level to be read.
 
 

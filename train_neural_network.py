@@ -6,7 +6,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 import matplotlib.pyplot as plt
 import joblib  # For saving the scaler
 import pickle
@@ -61,15 +61,17 @@ model = Sequential([
 # Compile the model
 model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
-# Train the Model
+# Callbacks: Early Stopping and Learning Rate Scheduler
 early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+lr_schedule = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3)
 
+# Train the Model
 history = model.fit(
     X_train, y_train,
     validation_split=0.2,
     epochs=50,
     batch_size=32,
-    callbacks=[early_stopping],
+    callbacks=[early_stopping, lr_schedule],
     verbose=1
 )
 
@@ -102,12 +104,12 @@ plt.show()
 
 print("\nClassification Report:\n", classification_report(y_holdout, y_pred_labels, zero_division=1))
 
-#  Test on Noisy Data
+#  Test  Noisy Data
 noisy_X_holdout = X_holdout + np.random.normal(0, 0.01, X_holdout.shape)
 noisy_loss, noisy_accuracy = model.evaluate(noisy_X_holdout, y_holdout)
 print(f"\nAccuracy on Noisy Data: {noisy_accuracy * 100:.2f}%")
 
-#  Evaluate with Cross-Validation
+#  Evaluate using Cross-Validation
 kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 fold_accuracies = []
 
@@ -117,8 +119,9 @@ for fold, (train_index, test_index) in enumerate(kf.split(X, y_encoded)):
     y_train_fold, y_test_fold = y_encoded[train_index], y_encoded[test_index]
 
     # Standardize the data
-    X_train_scaled = scaler.fit_transform(X_train_fold)
-    X_test_scaled = scaler.transform(X_test_fold)
+    fold_scaler = StandardScaler()
+    X_train_scaled = fold_scaler.fit_transform(X_train_fold)
+    X_test_scaled = fold_scaler.transform(X_test_fold)
 
     # Train the model on this fold
     history_fold = model.fit(
@@ -126,7 +129,7 @@ for fold, (train_index, test_index) in enumerate(kf.split(X, y_encoded)):
         validation_split=0.2,
         epochs=50,
         batch_size=32,
-        callbacks=[early_stopping],
+        callbacks=[early_stopping, lr_schedule],
         verbose=0
     )
 
@@ -138,4 +141,4 @@ for fold, (train_index, test_index) in enumerate(kf.split(X, y_encoded)):
 print(f"\nAverage Cross-Validation Accuracy: {np.mean(fold_accuracies) * 100:.2f}%")
 
 # Save the Model
-model.save('keystroke_model.h5')
+model.save('keystroke_model.keras')  # Save in the Keras format
